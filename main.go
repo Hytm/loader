@@ -30,9 +30,13 @@ var (
 )
 
 const (
-	minAmount = 0
-	maxAmount = 1000
-	reason    = "Suspicious activity detected!"
+	minAmount      = 0
+	maxAmount      = 1000
+	reason         = "Suspicious activity detected!"
+	notAnomaly     = "Ok"
+	warning        = "Warning"
+	alert          = "Alert"
+	blockThreshold = 20
 )
 
 type (
@@ -40,9 +44,10 @@ type (
 		pool *pgxpool.Pool
 	}
 	Message struct {
-		Destination string   `json:"destination"`
+		Id          string   `json:"id"`
 		Key         []string `json:"key"`
 		Source      string   `json:"source"`
+		Destination string   `json:"destination"`
 	}
 )
 
@@ -61,13 +66,23 @@ func (fd fraudDetector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Println("JSON parse error", err.Error())
 			return
 		}
-		go checkForFraud(fd.pool, m.Source, m.Destination)
+		go blockAccount(fd.pool, m)
 	}
 }
 
-func checkForFraud(pool *pgxpool.Pool, source, destination string) {
+func blockAccount(pool *pgxpool.Pool, m Message) {
+	//Check anomaly level
 	err := crdbpgx.ExecuteTx(context.Background(), pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-		return isFraud(context.Background(), tx, source, destination)
+		return isAnomaly(context.Background(), tx, m)
+	})
+
+	if err != nil {
+		log.Println(err)
+	}
+
+	//Block account based on anomaly
+	err = crdbpgx.ExecuteTx(context.Background(), pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+		return needToBlockAccount(context.Background(), tx, m.Source)
 	})
 
 	if err != nil {
@@ -75,9 +90,9 @@ func checkForFraud(pool *pgxpool.Pool, source, destination string) {
 	}
 }
 
-func isFraud(ctx context.Context, tx pgx.Tx, source, destination string) error {
-	var n sql.NullInt64
-	err := tx.QueryRow(ctx, "SELECT isFraud($1, $2)", source, destination).Scan(&n)
+func isAnomaly(ctx context.Context, tx pgx.Tx, m Message) error {
+	var anomaly string
+	err := tx.QueryRow(ctx, "SELECT anomalyLevel($1)", m.Id).Scan(&anomaly)
 
 	if err != nil {
 		if err.Error() != "no rows in result set" {
@@ -86,12 +101,48 @@ func isFraud(ctx context.Context, tx pgx.Tx, source, destination string) error {
 		return err
 	}
 
-	//too much transfers done!!!
-	if n.Int64 > 0 {
-		if _, err := tx.Exec(ctx, "INSERT INTO anomalies (source, destination, reason) VALUES ($1, $2, $3)", source, destination, reason); err != nil {
+	//Add anomaly to table
+	if anomaly != notAnomaly {
+		if _, err := tx.Exec(ctx, "INSERT INTO anomalies (source, destination, level) VALUES ($1, $2, $3)", m.Source, m.Destination, anomaly); err != nil {
 			log.Println(err)
 		}
 		log.Println(reason)
+	}
+
+	return nil
+}
+
+func needToBlockAccount(ctx context.Context, tx pgx.Tx, source string) error {
+	rows, err := tx.Query(ctx, "SELECT anomaly_level, count(*) FROM transfers WHERE source = '$1' GROUP BY anomaly_level", source)
+	if err != nil {
+		if err.Error() != "no rows in result set" {
+			return nil
+		}
+		return err
+	}
+
+	rate := 0
+	for rows.Next() {
+		level := ""
+		count := 0
+		err := rows.Scan(&level, &count)
+		if err != nil {
+			return err
+		}
+		switch level {
+		case warning:
+			rate += count
+		case alert:
+			rate += 5 * count
+		}
+	}
+
+	//Add account to blocked accounts
+	if rate >= blockThreshold {
+		if _, err := tx.Exec(ctx, "INSERT INTO blocked_accounts (source, reason) VALUES ($1, $2)", source, reason); err != nil {
+			log.Println(err)
+			return err
+		}
 	}
 
 	return nil
@@ -243,7 +294,7 @@ func callTransfer(ctx context.Context, pool *pgxpool.Pool, accounts, wait *int) 
 func transferFunds(ctx context.Context, tx pgx.Tx, from uuid.UUID, to uuid.UUID, amount int) error {
 	//Check for authorization
 	var isAuthorized sql.NullString
-	err := tx.QueryRow(ctx, "SELECT reason FROM anomalies WHERE source = $1 AND destination = $2", from, to).Scan(&isAuthorized)
+	err := tx.QueryRow(ctx, "SELECT reason FROM blocked_accounts WHERE source = $1", from).Scan(&isAuthorized)
 
 	if err != nil && err.Error() != "no rows in result set" {
 		return err

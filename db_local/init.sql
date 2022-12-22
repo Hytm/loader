@@ -15,14 +15,31 @@ CREATE TABLE anomalies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source UUID,
     destination UUID,
-    reason STRING
+    transfer_id UUID,
+    anomaly_level STRING
 ) WITH (ttl_expire_after = '1 minutes', ttl_job_cron = '*/1 * * * *');
+
+CREATE TABLE blocked_accounts (
+    source UUID PRIMARY KEY,
+    reason STRING
+) WITH (ttl_expire_after = '10 minutes', ttl_job_cron = '*/10 * * * *');
 
 SET cluster setting kv.rangefeed.enabled = true;
 
 /*
 SQL Function
-CREATE FUNCTION isFraud(source UUID, destination UUID) RETURNS INT IMMUTABLE LEAKPROOF LANGUAGE SQL AS 'SELECT COUNT(1) FROM transfers WHERE source = $1 AND destination = $2 having count(1) > 4';
+CREATE FUNCTION anomalyLevel(id UUID) RETURNS VARCHAR IMMUTABLE LEAKPROOF LANGUAGE SQL AS '
+SELECT
+    CASE
+        WHEN amount < 100 THEN 'Ok'
+        WHEN amount < 500 THEN 'Warning'
+        ELSE 'Alert'
+    END,
+    source,
+    destination
+FROM transfers
+WHERE id = '$1'
+';
 
 CDC
-CREATE CHANGEFEED INTO "http://localhost:8000/" WITH schema_change_policy = 'stop' AS SELECT source, destination FROM transfers;
+CREATE CHANGEFEED INTO "http://localhost:8000/" WITH schema_change_policy = 'stop' AS SELECT id, source, destination FROM transfers;
