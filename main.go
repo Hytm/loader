@@ -302,7 +302,6 @@ func transferFunds(ctx context.Context, tx pgx.Tx, from uuid.UUID, to uuid.UUID,
 
 	if isAuthorized.String != "" {
 		suspiciousTransfers++
-		tx.Rollback(ctx)
 		return errors.New(isAuthorized.String)
 	}
 
@@ -314,7 +313,6 @@ func transferFunds(ctx context.Context, tx pgx.Tx, from uuid.UUID, to uuid.UUID,
 	}
 
 	if fromBalance < amount {
-		tx.Rollback(ctx)
 		return errors.New("insufficent funds")
 	}
 	// Perform the transfer.
