@@ -28,17 +28,15 @@ SET cluster setting kv.rangefeed.enabled = true;
 
 /*
 SQL Function
-CREATE FUNCTION anomalyLevel(id UUID) RETURNS VARCHAR IMMUTABLE LEAKPROOF LANGUAGE SQL AS '
+CREATE FUNCTION anomalyLevel(id UUID) RETURNS STRING IMMUTABLE LEAKPROOF LANGUAGE SQL AS '
 SELECT
     CASE
-        WHEN amount < 100 THEN 'Ok'
-        WHEN amount < 500 THEN 'Warning'
-        ELSE 'Alert'
-    END,
-    source,
-    destination
+        WHEN amount < 100 THEN ''Ok''
+        WHEN amount < 500 THEN ''Warning''
+        ELSE ''Alert''
+    END
 FROM transfers
-WHERE id = '$1'
+WHERE id = $1
 ';
 
 CDC

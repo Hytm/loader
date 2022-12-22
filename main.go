@@ -150,7 +150,7 @@ func needToBlockAccount(ctx context.Context, tx pgx.Tx, source string) error {
 
 func main() {
 	duration := flag.Int("d", 1*3600, "number of seconds to run (default 3600)")
-	wait := flag.Int("w", 250, "wait between order in ms (default 250)")
+	wait := flag.Int("w", 1000, "wait between order in ms (default 1000)")
 	accountsPtr := flag.Int("a", 100, "number of accounts to create (default 100)")
 	flag.Parse()
 	if *accountsPtr <= 1 {
