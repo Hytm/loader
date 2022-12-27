@@ -26,18 +26,18 @@ CREATE TABLE blocked_accounts (
 
 SET cluster setting kv.rangefeed.enabled = true;
 
-/*
-SQL Function
-CREATE FUNCTION anomalyLevel(id UUID) RETURNS STRING IMMUTABLE LEAKPROOF LANGUAGE SQL AS '
-SELECT
-    CASE
-        WHEN amount < 100 THEN ''Ok''
-        WHEN amount < 500 THEN ''Warning''
-        ELSE ''Alert''
-    END
-FROM transfers
-WHERE id = $1
-';
 
-CDC
-CREATE CHANGEFEED INTO "http://localhost:8000/" WITH schema_change_policy = 'stop' AS SELECT id, source, destination FROM transfers;
+-- SQL Function
+-- CREATE FUNCTION anomalyLevel(id UUID) RETURNS STRING IMMUTABLE LEAKPROOF LANGUAGE SQL AS '
+-- SELECT
+--     CASE
+--         WHEN amount < 100 THEN ''Ok''
+--         WHEN amount < 500 THEN ''Warning''
+--         ELSE ''Alert''
+--     END
+-- FROM transfers
+-- WHERE id = $1
+-- ';
+
+-- CDC
+-- CREATE CHANGEFEED INTO "http://localhost:8000/" WITH schema_change_policy = 'stop' AS SELECT id, source, destination FROM transfers;

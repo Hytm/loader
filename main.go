@@ -61,36 +61,34 @@ func (fd fraudDetector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ms := bytes.Split(buf, newLine)
 	for _, v := range ms {
 		var m Message
+		if len(v) <= 0 {
+			break
+		}
 		err := json.Unmarshal(v, &m)
 		if err != nil {
+			log.Println(string(buf))
 			log.Println("JSON parse error", err.Error())
 			return
 		}
-		go blockAccount(fd.pool, m)
+		//detect suspicious transfers and block accounts if needed
+		go func(pool *pgxpool.Pool, m Message) {
+			blockAccount(context.Background(), pool, m)
+		}(fd.pool, m)
 	}
 }
 
-func blockAccount(pool *pgxpool.Pool, m Message) {
+func blockAccount(ctx context.Context, pool *pgxpool.Pool, m Message) {
 	//Check anomaly level
-	err := crdbpgx.ExecuteTx(context.Background(), pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-		return isAnomaly(context.Background(), tx, m)
+	err := crdbpgx.ExecuteTx(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+		return detectAnomalyAndBlock(context.Background(), tx, m)
 	})
 
 	if err != nil {
-		log.Println(err)
-	}
-
-	//Block account based on anomaly
-	err = crdbpgx.ExecuteTx(context.Background(), pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-		return needToBlockAccount(context.Background(), tx, m.Source)
-	})
-
-	if err != nil {
-		log.Println(err)
+		log.Println("blockAccount: ", err)
 	}
 }
 
-func isAnomaly(ctx context.Context, tx pgx.Tx, m Message) error {
+func detectAnomalyAndBlock(ctx context.Context, tx pgx.Tx, m Message) error {
 	var anomaly string
 	err := tx.QueryRow(ctx, "SELECT anomalyLevel($1)", m.Id).Scan(&anomaly)
 
@@ -103,22 +101,27 @@ func isAnomaly(ctx context.Context, tx pgx.Tx, m Message) error {
 
 	//Add anomaly to table
 	if anomaly != notAnomaly {
-		if _, err := tx.Exec(ctx, "INSERT INTO anomalies (source, destination, level) VALUES ($1, $2, $3)", m.Source, m.Destination, anomaly); err != nil {
-			log.Println(err)
+		if _, err := tx.Exec(ctx, "INSERT INTO anomalies (source, destination, anomaly_level) VALUES ($1, $2, $3)", m.Source, m.Destination, anomaly); err != nil {
+			log.Println("detectAnomalyAndBlock (insert): ", err)
+			return err
 		}
-		log.Println(reason)
+	}
+
+	err = needToBlockAccount(ctx, tx, m.Source)
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
 func needToBlockAccount(ctx context.Context, tx pgx.Tx, source string) error {
-	rows, err := tx.Query(ctx, "SELECT anomaly_level, count(*) FROM transfers WHERE source = '$1' GROUP BY anomaly_level", source)
+	rows, err := tx.Query(ctx, "SELECT anomaly_level, count(*) FROM anomalies WHERE source = $1 GROUP BY anomaly_level", source)
 	if err != nil {
 		if err.Error() != "no rows in result set" {
-			return nil
+			return err
 		}
-		return err
+		return nil
 	}
 
 	rate := 0
@@ -140,7 +143,6 @@ func needToBlockAccount(ctx context.Context, tx pgx.Tx, source string) error {
 	//Add account to blocked accounts
 	if rate >= blockThreshold {
 		if _, err := tx.Exec(ctx, "INSERT INTO blocked_accounts (source, reason) VALUES ($1, $2)", source, reason); err != nil {
-			log.Println(err)
 			return err
 		}
 	}
@@ -150,7 +152,7 @@ func needToBlockAccount(ctx context.Context, tx pgx.Tx, source string) error {
 
 func main() {
 	duration := flag.Int("d", 1*3600, "number of seconds to run (default 3600)")
-	wait := flag.Int("w", 1000, "wait between order in ms (default 1000)")
+	wait := flag.Int("w", 250, "wait between order in ms (default 1000)")
 	accountsPtr := flag.Int("a", 100, "number of accounts to create (default 100)")
 	flag.Parse()
 	if *accountsPtr <= 1 {
