@@ -31,7 +31,7 @@ var (
 
 const (
 	minAmount      = 0
-	maxAmount      = 1000
+	maxAmount      = 10000
 	reason         = "Suspicious activity detected!"
 	notAnomaly     = "Ok"
 	warning        = "Warning"
@@ -101,7 +101,9 @@ func detectAnomalyAndBlock(ctx context.Context, tx pgx.Tx, m Message) error {
 
 	//Add anomaly to table
 	if anomaly != notAnomaly {
-		if _, err := tx.Exec(ctx, "INSERT INTO anomalies (source, destination, anomaly_level) VALUES ($1, $2, $3)", m.Source, m.Destination, anomaly); err != nil {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO anomalies (source, destination, anomaly_level) VALUES ($1, $2, $3)",
+			m.Source, m.Destination, anomaly); err != nil {
 			log.Println("detectAnomalyAndBlock (insert): ", err)
 			return err
 		}
